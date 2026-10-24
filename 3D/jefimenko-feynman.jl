@@ -30,7 +30,7 @@ include("../pc_configs.jl")
 # ------------------------------ Parameters ------------------------------ #
 
 const dt = 0.1 # Time step 
-const steps = 200 # Number of steps
+const steps = 300 # Number of steps
 const xs = collect(LinRange(-5, 5, 15))
 const ys = collect(LinRange(-5, 5, 15))
 const zs = collect(LinRange(-5, 5, 15))
@@ -45,7 +45,7 @@ function getPointCharges()
     # return [PointCharge(t -> SA[2 * cos(c * 0.4 * t), 0.0, 0.0], 1.0)]
     # return [PointCharge(t -> line_config(c * 0.1 * t, d), 1.0) for d in range(0, 1, 5)[begin:end-1]]
     # return [PointCharge(t -> loop_config(c * 0.5 * t, φ, r=2.5), 1.0) for φ in range(0, 2π, 8)[begin:end-1]]
-    return [PointCharge(t -> toroid_config(c * 0.5 * t, φ), 1.0) for φ in range(0, 2π, 64)[begin:end-1]]
+    return [PointCharge(t -> toroid_config(c * 0.75 * t, φ, r=1, R=2.5), 1.0) for φ in range(0, 2π, 256)[begin:end-1]]
 end
 
 # ------------------------------ Simulation ------------------------------ #

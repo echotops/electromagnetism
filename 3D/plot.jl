@@ -71,10 +71,14 @@ function plot(filename, figure_size, limits;
     time_text = Observable("t = 0.00 ns")
     Label(fig[2, 1], time_text, halign=:left, tellwidth=false, fontsize=20)
 
+    charge_obs = Observable(Point3f.(charges[1]))
+    scatter!(ax, charge_obs, color=:white, markersize=8)
+    arrow_plots = []
+
     println()
     terminal = REPL.Terminals.TTYTerminal(string(), stdin, stdout, stderr)
     record(fig, filename * ".mp4", 1:length(Es); framerate = framerate) do i
-        empty!(ax)
+        foreach(p -> delete!(ax, p), arrow_plots); empty!(arrow_plots)
 
         time_text[] = "t = $(round(times[i], digits=2)) ns"
 
@@ -91,20 +95,26 @@ function plot(filename, figure_size, limits;
         magnetic_keep = findall(>=(magnetic_cutoff), magnetic_lengths)
 
         if electric_field
-            arrows3d!(ax, points[electric_keep], [Vec3f(e) for e in E[electric_keep]], normalize=true,
-                color=electric_colors[electric_keep], lengthscale=0.5, tipradius=0.075, tiplength=0.15,
-                shaftradius=0.02, transparency=true, align=:center)
+            push!(arrow_plots,
+                arrows3d!(
+                    ax,points[electric_keep], [Vec3f(e) for e in E[electric_keep]], normalize=true,
+                    color=electric_colors[electric_keep], lengthscale=0.5, tipradius=0.075, tiplength=0.15,
+                    shaftradius=0.02, transparency=true, align=:center
+                )
+            )
         end
 
         if magnetic_field
-            arrows3d!(ax, points[magnetic_keep], [Vec3f(b) for b in B[magnetic_keep]], normalize=true,
-                color=magnetic_colors[magnetic_keep], lengthscale=0.5, tipradius=0.075, tiplength=0.15,
-                shaftradius=0.02, transparency=true, align=:center)
+            push!(arrow_plots,
+                arrows3d!(
+                    ax, points[magnetic_keep], [Vec3f(b) for b in B[magnetic_keep]], normalize=true,
+                    color=magnetic_colors[magnetic_keep], lengthscale=0.5, tipradius=0.075, tiplength=0.15,
+                    shaftradius=0.02, transparency=true, align=:center
+                )
+            )
         end
         
-        for position in charge_positions
-            scatter!(ax, position..., color=:white, markersize=8)
-        end
+        charge_obs[] = Point3f.(charge_positions)
 
         if (i % 10 == 0)
             text = "Frame $i of $(length(Es))"
@@ -113,8 +123,8 @@ function plot(filename, figure_size, limits;
             println(text)
         end
         
-        ax.elevation[] = π/8
-        ax.azimuth[] = π/8 + π/4 * smooth_pan(i / length(Es))
+        ax.elevation[] = π/8 + 3π/8 * smooth_bump_pan(i / length(Es), 0, 0.25)
+        ax.azimuth[] = 3π/8 + π/8 * smooth_bump_pan(i / length(Es), 0, 0.25)
     end
 
     println("Plot complete! Saved to \" " * filename * ".mp4\" ")
@@ -131,10 +141,27 @@ function loadFromBinary()
 end
 
 function smooth_pan(t)
+    f(t) = 3t^2 - 2t^3
     if t < 0
         return 0
     elseif t < 1
-        return 3t^2 - 2t^3
+        return f(t)
+    end
+    return 1
+end
+
+function smooth_bump_pan(t, s=0.5, d=0)
+    f(t) = 3t^2 - 2t^3
+    g(t) = f(t / (s - d / 2)) * s
+    h(t) = f(-(t - 1) / (1 - s - d / 2)) * (s - 1) + 1
+    if t < 0
+        return 0
+    elseif t <= (s - d / 2)
+        return g(t)
+    elseif t <= (s + d / 2)
+        return g(s - d / 2)
+    elseif t <= 1
+        return h(t)
     end
     return 1
 end
@@ -150,4 +177,4 @@ function electric_color(length, cutoff, scale)
 end
 
 plot("sim_run", (1000, 1000), (-4, 4, -4, 4, -4, 4),
-    electric_field=false, magnetic_limits=(0.99, 0.5), magnetic_colorbar=false)
+    electric_field=false, magnetic_limits=(0.98, 0.9), magnetic_colorbar=false)
