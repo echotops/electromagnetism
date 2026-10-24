@@ -26,7 +26,9 @@ const c_SI = 299792458.0 # For converting to SI
 function plot(filename, figure_size, limits;
     electric_field=true, magnetic_field=true,
     electric_limits=(0.95, 0.5), magnetic_limits=(0.95, 0.5),
-    electric_colorbar=false, magnetic_colorbar=false)
+    electric_colorbar=false, magnetic_colorbar=false,
+    condition=(p -> true),
+    axis_elevation=(t -> π/3), axis_azimuth=(t -> π/3))
 
     set_theme!(merge(theme_black(), theme_latexfonts()))
     fig = Figure(size=figure_size)
@@ -35,19 +37,20 @@ function plot(filename, figure_size, limits;
 
     println("Loading run from the cache...")
     times, grid, charges, Es, Bs = loadFromBinary()
-    println("Loaded from the cache!")
-
     points = [Point3f(g) for g in grid]
+    println("Loaded from the cache!")
 
     println("Gathering statistics...")
 
+    conditional_grid = findall(condition, grid)
+
     Es_lengths = [[hypot(e...) for e in E] for E in Es]
-    Es_all_lengths = reduce(vcat, Es_lengths)
+    Es_all_lengths = reduce(vcat, [Es_lengths[i][conditional_grid] for i in eachindex(Es_lengths)])
     filter!(isfinite, Es_all_lengths)
     electric_scale = quantile(Es_all_lengths, electric_limits[1])
     electric_cutoff = quantile(Es_all_lengths, electric_limits[2])
     Bs_lengths = [[hypot(b...) for b in B] for B in Bs]
-    Bs_all_lengths = reduce(vcat, Bs_lengths)
+    Bs_all_lengths = reduce(vcat, [Bs_lengths[i][conditional_grid] for i in eachindex(Bs_lengths)])
     filter!(isfinite, Bs_all_lengths)
     magnetic_scale = quantile(Bs_all_lengths, magnetic_limits[1]) 
     magnetic_cutoff = quantile(Bs_all_lengths, magnetic_limits[2])
@@ -61,9 +64,8 @@ function plot(filename, figure_size, limits;
     end
 
     if show_magnetic_colorbar
-        row = show_electric_colorbar ? 4 : 3
         magnetic_colormap = [magnetic_color(l, magnetic_cutoff, magnetic_scale) for l in range(magnetic_cutoff, magnetic_scale, length=256)]
-        Colorbar(fig[row, 1], limits=(magnetic_cutoff / c_SI, magnetic_scale / c_SI), colormap=magnetic_colormap, label="|B| (T)", vertical=false, flipaxis=false, labelsize=20, ticklabelsize=20)
+        Colorbar(fig[3 + show_electric_colorbar, 1], limits=(magnetic_cutoff / c_SI, magnetic_scale / c_SI), colormap=magnetic_colormap, label="|B| (T)", vertical=false, flipaxis=false, labelsize=20, ticklabelsize=20)
     end
 
     println("Plotting simulation...")
@@ -75,9 +77,7 @@ function plot(filename, figure_size, limits;
     scatter!(ax, charge_obs, color=:white, markersize=8)
     arrow_plots = []
 
-    println()
-    terminal = REPL.Terminals.TTYTerminal(string(), stdin, stdout, stderr)
-    record(fig, filename * ".mp4", 1:length(Es); framerate = framerate) do i
+    function draw_frame!(i)
         foreach(p -> delete!(ax, p), arrow_plots); empty!(arrow_plots)
 
         time_text[] = "t = $(round(times[i], digits=2)) ns"
@@ -88,16 +88,16 @@ function plot(filename, figure_size, limits;
 
         electric_lengths = Es_lengths[i]
         electric_colors = [electric_color(l, electric_cutoff, electric_scale) for l in electric_lengths]
-        electric_keep = findall(>=(electric_cutoff), electric_lengths)
+        electric_keep = filter(n -> electric_lengths[n] >= electric_cutoff, conditional_grid)
 
         magnetic_lengths = Bs_lengths[i]
         magnetic_colors = [magnetic_color(l, magnetic_cutoff, magnetic_scale) for l in magnetic_lengths]
-        magnetic_keep = findall(>=(magnetic_cutoff), magnetic_lengths)
+        magnetic_keep = filter(n -> magnetic_lengths[n] >= magnetic_cutoff, conditional_grid)
 
         if electric_field
             push!(arrow_plots,
                 arrows3d!(
-                    ax,points[electric_keep], [Vec3f(e) for e in E[electric_keep]], normalize=true,
+                    ax, points[electric_keep], [Vec3f(e) for e in E[electric_keep]], normalize=true,
                     color=electric_colors[electric_keep], lengthscale=0.5, tipradius=0.075, tiplength=0.15,
                     shaftradius=0.02, transparency=true, align=:center
                 )
@@ -115,6 +115,15 @@ function plot(filename, figure_size, limits;
         end
         
         charge_obs[] = Point3f.(charge_positions)
+    end
+
+    println()
+    terminal = REPL.Terminals.TTYTerminal(string(), stdin, stdout, stderr)
+    record(fig, filename * ".mp4", 1:length(Es); framerate = framerate) do i
+        draw_frame!(i)
+
+        ax.elevation[] = axis_elevation(i / length(Es))
+        ax.azimuth[] = axis_azimuth(i / length(Es))
 
         if (i % 10 == 0)
             text = "Frame $i of $(length(Es))"
@@ -122,12 +131,59 @@ function plot(filename, figure_size, limits;
             REPL.Terminals.cmove_line_up(terminal)
             println(text)
         end
-        
-        ax.elevation[] = π/8 + 3π/8 * smooth_bump_pan(i / length(Es), 0, 0.25)
-        ax.azimuth[] = 3π/8 + π/8 * smooth_bump_pan(i / length(Es), 0, 0.25)
     end
 
     println("Plot complete! Saved to \" " * filename * ".mp4\" ")
+
+    controls = fig[3 + show_electric_colorbar + show_magnetic_colorbar, 1] = GridLayout()
+    play = Button(
+        controls[1, 1], label="Start", width=80, height=35, fontsize=20, cornerradius=7,
+        buttoncolor=RGBf(0.1, 0.1, 0.1), buttoncolor_hover=RGBf(0.2, 0.2, 0.2),
+        buttoncolor_active=RGBf(0.4, 0.4, 0.4),
+        labelcolor=:white, labelcolor_hover=:white, labelcolor_active=:white,
+    )
+
+    slider = Slider(
+        controls[1, 2], range=1:length(Es), startvalue=1, linewidth=14,
+        color_active=RGBf(0.8, 0.8, 0.8), color_active_dimmed=RGBf(0.4, 0.4, 0.4),
+        color_inactive=RGBf(0.2, 0.2, 0.2)
+    )
+
+    frame_text = lift(i -> "$i / $(length(Es))", slider.value)
+    Label(controls[1, 3], frame_text, fontsize=16, color=RGBf(0.7, 0.7, 0.7), width=80)
+
+    colgap!(controls, 16)
+    playing = Observable(false)
+
+    on(slider.value) do i
+        draw_frame!(i)
+    end
+
+    play_token = Ref(0)
+
+    on(play.clicks) do _
+        playing[] = !playing[]
+        play.label[] = playing[] ? "Stop" : "Start"
+        if playing[]
+            token = (play_token[] += 1)
+            @async begin
+                start = slider.value[]
+                t0 = time()
+                shown = 0
+                while playing[] && play_token[] == token && events(fig).window_open[]
+                    target = floor(Int, (time() - t0) * framerate)
+                    if target > shown
+                        set_close_to!(slider, mod1(start + target, length(Es)))
+                        shown = target
+                    end
+                    sleep(0.001)
+                end
+            end
+        end
+    end
+
+    set_close_to!(slider, 1)
+    display(fig)
 end
 
 function loadFromBinary()
@@ -176,5 +232,11 @@ function electric_color(length, cutoff, scale)
     return RGBAf(1, 0, 0, s)
 end
 
-plot("sim_run", (1000, 1000), (-4, 4, -4, 4, -4, 4),
-    electric_field=false, magnetic_limits=(0.98, 0.9), magnetic_colorbar=false)
+plot(
+    "sim_run", (1000, 1000), (-10, 10, -10, 10, -1, 1),
+    electric_limits=(0.95, 0.5), electric_colorbar=false,
+    magnetic_limits=(0.95, 0.5), magnetic_colorbar=false,
+    condition=(p -> abs(p[3]) < 1e-9),
+    axis_elevation=(t -> π/6),
+    axis_azimuth=(t -> π/6 * cos(t * π))
+)
